@@ -1,0 +1,186 @@
+---
+title: "Coursera Machine Learning Final Project"
+output: word_document
+---
+
+The Dataset:
+The data comes from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set.
+
+#Load the library
+```{r}
+library(caret)
+```
+
+Read the dataset in R
+
+
+```{r}
+trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training <- read.csv(url(trainUrl))
+testing <- read.csv(url(testUrl))
+dim(training)
+```
+The training dataset consists of 19622 rows and 160 columns .
+So there are 160 columns all together. Our dependent variable is “classe”. Let's see how many of them are A, how many B and C,D or E from the data in training
+```{r}
+table(training$classe)
+```
+Data Cleaning:
+Missing Data:
+Let’s take a look at what columns have missing values:
+
+```{r}
+summary(training)
+nacols=training[colSums(is.na(training))>0]
+dim(nacols)
+colSums(is.na(nacols))
+```
+
+It looks like we have missing values in the several columns (67). All the 67 columns have 19216 missing values out of 19622 records.We will not get any meaningful insight from these columns.So we can safely remove these columns. 
+
+In general, if we have more than 60% of NA values in a particular column, We will drop the column
+Remove the columns which have more than 60% NA values
+
+```{r}
+train<-training[!colSums(is.na(training))>(nrow(training)*.6)]
+dim(train) 
+```
+Zero Variance:
+Zero and near-zero variance predictors happen quite often across samples. Zero variance means datasets come with predictors that take a unique value across samples. For many models (excluding tree-based models), this may cause the model to crash or the fit to be unstable.
+To remove predictors like those nearZeroVar from the caret package is used. It not only removes predictors that have one unique value across samples (zero variance predictors), but also removes predictors that have large ratio of the frequency of the most common value to the frequency of the second most common value (near-zero variance predictors).
+Remove zero variance or nearly zero variance columns
+
+```{r}
+badCols <- nearZeroVar(train)
+train <- train[, -badCols] 
+dim(train)
+```
+We can see columns x,user_name,raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp of no use. We can ignore these
+```{r}
+train<-train[,-c(1,2,3,4,5)]
+```
+Identify Correlated Predictors:
+While there are some models that thrive on correlated predictors (such as pls), other models may benefit from reducing the level of correlation between the predictors. 
+Given a correlation matrix, the findCorrelation function uses the following algorithm to flag predictors for removal.
+
+```{r}
+#Check for corelated variables(dont consider Classe variable)
+descrCor <- cor(train[,c(1:53)])
+# Check for abolutely corelated variables.There are none.
+highCorr <- sum(abs(descrCor[upper.tri(descrCor)]) > 0.999)
+```
+
+We set cut off is .75. If more than that we will remove those variables
+```{r}
+highlyCorDescr <- findCorrelation(descrCor, cutoff = 0.75)
+# Remove highly co related variables
+train <- train[, -highlyCorDescr]
+dim(train)
+```
+Prediction Algorithms:
+
+Create some models of the data and estimate their accuracy on unseen data:
+The steps followed:
+1. Separate out a validation dataset.
+2. Set-up the test harness to use 5-fold cross validation.
+3. Build 5 different models to predict classe variable
+4. Select the best model.
+
+Create validation dataset using Data Split:
+We split the dataset into two, 70% of will be used to train the models and 30% that will be held back as a validation dataset. The validation set will be used to get a second and independent idea of how accurate the best model might actually be. It will also give us out of sample error
+This gives more concrete estimate of the accuracy of the best model on unseen data by evaluating it on actual unseen data.
+
+```{r}
+intrain<-createDataPartition(y=train$classe,p=0.7,list=FALSE)
+train_final <- train[intrain,]
+test_final <- train[-intrain,]
+```
+
+Test Harness:
+5-fold cross validation is used to estimate accuracy.
+This will split our dataset into 5 parts, train on 4 and test on 1 and repeat for all combinations of train-test splits.
+
+```{r}
+#Create the model
+control <- trainControl(method="repeatedcv", number=5)
+```
+
+The metric “Accuracy” is used to evaluate models. This is a ratio of the number of correctly predicted instances in divided by the total number of instances in the dataset multiplied by 100 to give a percentage (e.g. 95% accurate). The out of sample will be calculated as (1-accuracy) multiplied by 100 to give a percentage.
+Build Models:
+Spot check 4 different algorithms to check wich one gives better accuracy on training dataset:
+1. Stochastic Gradient Boosting (Generalized Boosted Modeling GBM)
+2. K-Nearest Neighbors (KNN).
+3. Classification and Regression Trees (CART).
+4. Random Forest(RF).
+The random number seed is set before each run to ensure that the evaluation of each algorithm is performed using exactly the same data splits. It ensures the results are directly comparable.
+
+```{r}
+seed<-123
+## Stochastic Gradient Boosting (Generalized Boosted Modeling)
+set.seed(seed)
+fit.gbm <- train(classe~., data=train_final, method="gbm", preProc=c("center", "scale"),verbose=F,trControl=control)
+# K nearesr neighbor algorithm
+set.seed(seed)
+fit.knn <- train(classe~., data=train_final, method="knn",  trControl=control)
+# CART
+set.seed(seed)
+fit.cart <- train(classe~., data=train_final, method="rpart", trControl=control)
+# Random Forest
+set.seed(seed)
+fit.rf<- train(classe~., data=train_final, method="rf",  trControl=control)
+```
+
+Select the best model:
+We now have 4 models and accuracy estimations for each. We need to compare the models to each other and select the most accurate.
+
+```{r}
+results <- resamples(list(GBM=fit.gbm, KNN=fit.knn, CART=fit.cart, RandomForest=fit.rf))
+#summarize the result of the algorithms as a table.
+summary(results)
+```
+Let’s review the results using a few different visualization techniques to get an idea of the mean and spread of accuracies.
+
+```{r, echo=FALSE}
+# boxplot comparison
+bwplot(results)
+
+# Dot-plot comparison
+dotplot(results)
+```
+
+Now we can see Random Forest and GBM algorithm are the most accurate models that we tested. Now we want to get an idea of the accuracy of the model on our validation set.
+This will give us an independent final check on the accuracy and out of sample error of the best model. It is valuable to keep a validation set just in case you made a slip during training, such as overfitting to the training set or a data leak. Both will result in an overly optimistic result.
+We can run the Random Forest and GBM model directly on the validation set and summarize the results as a final accuracy score, a confusion matrix and a classification report and out of sample error.
+Predictions:
+
+```{r}
+# Make prediction in the validation dataset for RF model
+predictions <- predict(fit.rf, test_final,type="raw")
+table(predictions)
+confusionMatrix(predictions, test_final$classe) 
+# Make prediction in the validation dataset for GBM model
+predictions <- predict(fit.gbm, test_final,type="raw")
+table(predictions)
+confusionMatrix(predictions, test_final$classe) 
+```
+
+We can see that Random forest gives slightly better performance than GBM. The Random Forest algorithm gives an accuracy of 0.9985 or 99.85%. The out of sample error is .0015 or .15%.The confusion matrix provides an indication of the nine errors made. 
+Predictions on testing set:
+We’re now ready to fit the model to our test data and make our predictions.
+Prepare the test dataset:
+
+```{r}
+#Remove the classe variable from train_final
+train_class<-train_final[,-c(33)]
+
+# Allow only variables in testing that are also in train_final which is used to create the model
+colnames<-colnames(train_class)
+test_df_final<-testing[colnames]
+
+#Make predictions
+predict(fit.rf , test_df_final)
+```
+
+
